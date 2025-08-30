@@ -3,7 +3,7 @@
 
 use std::rc::Rc;
 use std::sync::Arc;
-
+use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, HasRawDisplayHandle, HasRawWindowHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle, WaylandWindowHandle};
 use crate::winitwindowadapter::physical_size_to_slint;
 use i_slint_core::graphics::RequestedGraphicsAPI;
 use i_slint_core::platform::PlatformError;
@@ -155,23 +155,49 @@ impl super::WinitCompatibleRenderer for WinitSkiaRenderer {
 
     fn resume(
         &self,
-        active_event_loop: &winit::event_loop::ActiveEventLoop,
+        active_event_loop: &dyn winit::event_loop::ActiveEventLoop,
         window_attributes: winit::window::WindowAttributes,
-    ) -> Result<Arc<winit::window::Window>, PlatformError> {
-        let winit_window = Arc::new(active_event_loop.create_window(window_attributes).map_err(
+    ) -> Result<Arc<dyn winit::window::Window>, PlatformError> {
+        let winit_window = active_event_loop.create_window(window_attributes).map_err(
             |winit_os_error| {
                 PlatformError::from(format!(
                     "Error creating native window for Skia rendering: {}",
                     winit_os_error
                 ))
             },
-        )?);
+        )?;
+        let winit_window: Arc<dyn winit::window::Window> = winit_window.into();
 
-        let size = winit_window.inner_size();
+        let size = winit_window.surface_size();
+
+        struct WindowHandle(RawWindowHandle, RawDisplayHandle);
+        unsafe impl Send for WindowHandle {}
+        unsafe impl Sync for WindowHandle {}
+        impl raw_window_handle::HasWindowHandle for WindowHandle {
+            fn window_handle(&self) -> Result<raw_window_handle::WindowHandle<'_>, HandleError> {
+                unsafe {
+                    Ok(raw_window_handle::WindowHandle::borrow_raw(self.0.clone()))
+                }
+            }
+        }
+        impl raw_window_handle::HasDisplayHandle for WindowHandle {
+            fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+                unsafe {
+                    Ok(raw_window_handle::DisplayHandle::borrow_raw(self.1.clone()))
+                }
+            }
+        }
+
+        let window_handle = WindowHandle(
+            winit_window.window_handle().unwrap().raw_window_handle().unwrap(),
+            winit_window.display_handle().unwrap().raw_display_handle().unwrap(),
+        );
+
+        let window_handle = Arc::new(window_handle);
 
         self.renderer.set_window_handle(
-            winit_window.clone(),
-            winit_window.clone(),
+            window_handle.clone(),
+            window_handle,
             physical_size_to_slint(&size),
             self.requested_graphics_api.clone(),
         )?;

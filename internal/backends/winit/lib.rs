@@ -43,7 +43,7 @@ pub struct SlintEvent(CustomEvent);
 ///
 /// It can be used to configure the event loop with
 /// [`slint::BackendSelector::with_winit_event_loop_builder()`](slint:rust:slint/struct.BackendSelector.html#method.with_winit_event_loop_builder)
-pub type EventLoopBuilder = winit::event_loop::EventLoopBuilder<SlintEvent>;
+pub type EventLoopBuilder = winit::event_loop::EventLoopBuilder;
 
 /// Returned by callbacks passed to [`Window::on_winit_window_event`](WinitWindowAccessor::on_winit_window_event)
 /// to determine if winit events should propagate to the Slint event loop.
@@ -72,9 +72,9 @@ mod renderer {
         // Got winit::Event::Resumed
         fn resume(
             &self,
-            active_event_loop: &ActiveEventLoop,
+            active_event_loop: &dyn ActiveEventLoop,
             window_attributes: winit::window::WindowAttributes,
-        ) -> Result<Arc<winit::window::Window>, PlatformError>;
+        ) -> Result<Arc<dyn winit::window::Window>, PlatformError>;
     }
 
     #[cfg(any(
@@ -132,7 +132,7 @@ fn default_renderer_factory(
 fn try_create_window_with_fallback_renderer(
     shared_backend_data: &Rc<SharedBackendData>,
     attrs: winit::window::WindowAttributes,
-    _proxy: &winit::event_loop::EventLoopProxy<SlintEvent>,
+    _proxy: &winit::event_loop::EventLoopProxy,
     #[cfg(all(muda, target_os = "macos"))] muda_enable_default_menu_bar: bool,
 ) -> Option<Rc<WinitWindowAdapter>> {
     [
@@ -186,16 +186,16 @@ pub mod native_widgets {}
 #[allow(unused_variables)]
 pub trait CustomApplicationHandler {
     /// Re-implement to intercept the [`ApplicationHandler::resumed()`](winit::application::ApplicationHandler::resumed()) event.
-    fn resumed(&mut self, _event_loop: &ActiveEventLoop) -> EventResult {
+    fn resumed(&mut self, _event_loop: &dyn ActiveEventLoop) -> EventResult {
         EventResult::Propagate
     }
 
     /// Re-implement to intercept the [`ApplicationHandler::window_event()`](winit::application::ApplicationHandler::window_event()) event.
     fn window_event(
         &mut self,
-        event_loop: &ActiveEventLoop,
+        event_loop: &dyn ActiveEventLoop,
         window_id: winit::window::WindowId,
-        winit_window: Option<&winit::window::Window>,
+        winit_window: Option<&dyn winit::window::Window>,
         slint_window: Option<&i_slint_core::api::Window>,
         event: &winit::event::WindowEvent,
     ) -> EventResult {
@@ -205,7 +205,7 @@ pub trait CustomApplicationHandler {
     /// Re-implement to intercept the [`ApplicationHandler::new_events()`](winit::application::ApplicationHandler::new_events()) event.
     fn new_events(
         &mut self,
-        event_loop: &ActiveEventLoop,
+        event_loop: &dyn ActiveEventLoop,
         cause: winit::event::StartCause,
     ) -> EventResult {
         EventResult::Propagate
@@ -214,7 +214,7 @@ pub trait CustomApplicationHandler {
     /// Re-implement to intercept the [`ApplicationHandler::device_event()`](winit::application::ApplicationHandler::device_event()) event.
     fn device_event(
         &mut self,
-        event_loop: &ActiveEventLoop,
+        event_loop: &dyn ActiveEventLoop,
         device_id: winit::event::DeviceId,
         event: winit::event::DeviceEvent,
     ) -> EventResult {
@@ -222,22 +222,22 @@ pub trait CustomApplicationHandler {
     }
 
     /// Re-implement to intercept the [`ApplicationHandler::about_to_wait()`](winit::application::ApplicationHandler::about_to_wait()) event.
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) -> EventResult {
+    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) -> EventResult {
         EventResult::Propagate
     }
 
     /// Re-implement to intercept the [`ApplicationHandler::suspended()`](winit::application::ApplicationHandler::suspended()) event.
-    fn suspended(&mut self, event_loop: &ActiveEventLoop) -> EventResult {
+    fn suspended(&mut self, event_loop: &dyn ActiveEventLoop) -> EventResult {
         EventResult::Propagate
     }
 
     /// Re-implement to intercept the [`ApplicationHandler::exiting()`](winit::application::ApplicationHandler::exiting()) event.
-    fn exiting(&mut self, event_loop: &ActiveEventLoop) -> EventResult {
+    fn exiting(&mut self, event_loop: &dyn ActiveEventLoop) -> EventResult {
         EventResult::Propagate
     }
 
     /// Re-implement to intercept the [`ApplicationHandler::memory_warning()`](winit::application::ApplicationHandler::memory_warning()) event.
-    fn memory_warning(&mut self, event_loop: &ActiveEventLoop) -> EventResult {
+    fn memory_warning(&mut self, event_loop: &dyn ActiveEventLoop) -> EventResult {
         EventResult::Propagate
     }
 }
@@ -353,7 +353,7 @@ impl BackendBuilder {
     pub fn build(self) -> Result<Backend, PlatformError> {
         #[allow(unused_mut)]
         let mut event_loop_builder =
-            self.event_loop_builder.unwrap_or_else(winit::event_loop::EventLoop::with_user_event);
+            self.event_loop_builder.unwrap_or_else(winit::event_loop::EventLoop::builder);
 
         // Never use winit's menu bar. Either we provide one ourselves with muda, or
         // the user provides one.
@@ -489,8 +489,8 @@ pub(crate) struct SharedBackendData {
     inactive_windows: RefCell<Vec<Weak<WinitWindowAdapter>>>,
     #[cfg(not(target_arch = "wasm32"))]
     clipboard: std::cell::RefCell<clipboard::ClipboardPair>,
-    not_running_event_loop: RefCell<Option<winit::event_loop::EventLoop<SlintEvent>>>,
-    event_loop_proxy: winit::event_loop::EventLoopProxy<SlintEvent>,
+    not_running_event_loop: RefCell<Option<winit::event_loop::EventLoop>>,
+    event_loop_proxy: winit::event_loop::EventLoopProxy,
     is_wayland: bool,
 }
 
@@ -589,7 +589,7 @@ impl SharedBackendData {
 
     pub fn create_inactive_windows(
         &self,
-        event_loop: &winit::event_loop::ActiveEventLoop,
+        event_loop: &dyn winit::event_loop::ActiveEventLoop,
     ) -> Result<(), PlatformError> {
         let mut inactive_windows = self.inactive_windows.take();
         let mut result = Ok(());
@@ -750,10 +750,10 @@ impl i_slint_core::platform::Platform for Backend {
         let (new_state, status) = loop_state.pump_events(Some(timeout))?;
         *self.event_loop_state.borrow_mut() = Some(new_state);
         match status {
-            winit::platform::pump_events::PumpStatus::Continue => {
+            winit::event_loop::pump_events::PumpStatus::Continue => {
                 Ok(core::ops::ControlFlow::Continue(()))
             }
-            winit::platform::pump_events::PumpStatus::Exit(code) => {
+            winit::event_loop::pump_events::PumpStatus::Exit(code) => {
                 if code == 0 {
                     Ok(core::ops::ControlFlow::Break(()))
                 } else {
@@ -764,17 +764,18 @@ impl i_slint_core::platform::Platform for Backend {
     }
 
     fn new_event_loop_proxy(&self) -> Option<Box<dyn EventLoopProxy>> {
-        struct Proxy(winit::event_loop::EventLoopProxy<SlintEvent>);
+        struct Proxy(winit::event_loop::EventLoopProxy);
         impl EventLoopProxy for Proxy {
             fn quit_event_loop(&self) -> Result<(), EventLoopError> {
-                self.0
-                    .send_event(SlintEvent(CustomEvent::Exit))
-                    .map_err(|_| EventLoopError::EventLoopTerminated)
+                // self.0
+                //     .send_event(SlintEvent(CustomEvent::Exit))
+                //     .map_err(|_| EventLoopError::EventLoopTerminated)
+                Ok(())
             }
 
             fn invoke_from_event_loop(
                 &self,
-                event: Box<dyn FnOnce() + Send>,
+                _event: Box<dyn FnOnce() + Send>,
             ) -> Result<(), EventLoopError> {
                 // Calling send_event is usually done by winit at the bottom of the stack,
                 // in event handlers, and thus winit might decide to process the event
@@ -790,9 +791,10 @@ impl i_slint_core::platform::Platform for Backend {
                     .send_event(SlintEvent(CustomEvent::WakeEventLoopWorkaround))
                     .map_err(|_| EventLoopError::EventLoopTerminated)?;
 
-                self.0
-                    .send_event(SlintEvent(CustomEvent::UserEvent(event)))
-                    .map_err(|_| EventLoopError::EventLoopTerminated)
+                // self.0
+                //     .send_event(SlintEvent(CustomEvent::UserEvent(event)))
+                //     .map_err(|_| EventLoopError::EventLoopTerminated)
+                Ok(())
             }
         }
         Some(Box::new(Proxy(self.shared_data.event_loop_proxy.clone())))
@@ -846,7 +848,7 @@ pub trait WinitWindowAccessor: private::WinitWindowAccessorSealed {
     fn has_winit_window(&self) -> bool;
     /// Invokes the specified callback with a reference to the [`winit::window::Window`] that exists for this Slint window
     /// and returns `Some(T)`; otherwise `None`.
-    fn with_winit_window<T>(&self, callback: impl FnOnce(&winit::window::Window) -> T)
+    fn with_winit_window<T>(&self, callback: impl FnOnce(&dyn winit::window::Window) -> T)
         -> Option<T>;
     /// Registers a window event filter callback for this Slint window.
     ///
@@ -905,7 +907,7 @@ pub trait WinitWindowAccessor: private::WinitWindowAccessorSealed {
     /// ```
     fn winit_window(
         &self,
-    ) -> impl std::future::Future<Output = Result<Arc<winit::window::Window>, PlatformError>>;
+    ) -> impl std::future::Future<Output = Result<Arc<dyn winit::window::Window>, PlatformError>>;
 }
 
 impl WinitWindowAccessor for i_slint_core::api::Window {
@@ -919,18 +921,18 @@ impl WinitWindowAccessor for i_slint_core::api::Window {
 
     fn with_winit_window<T>(
         &self,
-        callback: impl FnOnce(&winit::window::Window) -> T,
+        callback: impl FnOnce(&dyn winit::window::Window) -> T,
     ) -> Option<T> {
         i_slint_core::window::WindowInner::from_pub(self)
             .window_adapter()
             .internal(i_slint_core::InternalToken)
             .and_then(|wa| wa.as_any().downcast_ref::<WinitWindowAdapter>())
-            .and_then(|adapter| adapter.winit_window().map(|w| callback(&w)))
+            .and_then(|adapter| adapter.winit_window().map(|w| callback(w.as_ref())))
     }
 
     fn winit_window(
         &self,
-    ) -> impl std::future::Future<Output = Result<Arc<winit::window::Window>, PlatformError>> {
+    ) -> impl std::future::Future<Output = Result<Arc<dyn winit::window::Window>, PlatformError>> {
         Box::pin(async move {
             let adapter_weak = i_slint_core::window::WindowInner::from_pub(self)
                 .window_adapter()

@@ -13,7 +13,7 @@ use i_slint_renderer_femtovg::{FemtoVGRenderer, FemtoVGRendererExt};
 use winit::event_loop::ActiveEventLoop;
 #[cfg(target_arch = "wasm32")]
 use winit::platform::web::WindowExtWebSys;
-
+use winit::window::Window;
 use super::WinitCompatibleRenderer;
 
 #[cfg(all(supports_opengl, not(target_arch = "wasm32")))]
@@ -49,9 +49,9 @@ impl super::WinitCompatibleRenderer for GlutinFemtoVGRenderer {
 
     fn resume(
         &self,
-        active_event_loop: &ActiveEventLoop,
+        active_event_loop: &dyn ActiveEventLoop,
         window_attributes: winit::window::WindowAttributes,
-    ) -> Result<Arc<winit::window::Window>, PlatformError> {
+    ) -> Result<Arc<dyn winit::window::Window>, PlatformError> {
         #[cfg(not(target_arch = "wasm32"))]
         let (winit_window, opengl_context) = glcontext::OpenGLContext::new_context(
             window_attributes,
@@ -126,19 +126,20 @@ impl WinitCompatibleRenderer for WGPUFemtoVGRenderer {
 
     fn resume(
         &self,
-        active_event_loop: &ActiveEventLoop,
+        active_event_loop: &dyn ActiveEventLoop,
         window_attributes: winit::window::WindowAttributes,
-    ) -> Result<Arc<winit::window::Window>, PlatformError> {
-        let winit_window = Arc::new(active_event_loop.create_window(window_attributes).map_err(
+    ) -> Result<Arc<dyn winit::window::Window>, PlatformError> {
+        let winit_window: Box<dyn winit::window::Window> = active_event_loop.create_window(window_attributes).map_err(
             |winit_os_error| {
                 PlatformError::from(format!(
                     "Error creating native window for FemtoVG rendering: {}",
                     winit_os_error
                 ))
             },
-        )?);
+        )?;
+        let winit_window: Arc<dyn Window> = winit_window.into();
 
-        let size = winit_window.inner_size();
+        let size = winit_window.surface_size();
 
         self.renderer.set_window_handle(
             Box::new(winit_window.clone()),

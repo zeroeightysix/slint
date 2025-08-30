@@ -52,9 +52,9 @@ pub struct AccessKitAdapter {
 impl AccessKitAdapter {
     pub fn new(
         window_adapter_weak: Weak<WinitWindowAdapter>,
-        active_event_loop: &ActiveEventLoop,
-        winit_window: &winit::window::Window,
-        proxy: EventLoopProxy<SlintEvent>,
+        active_event_loop: &dyn ActiveEventLoop,
+        winit_window: &dyn winit::window::Window,
+        proxy: EventLoopProxy,
     ) -> Self {
         Self {
             inner: accesskit_winit::Adapter::with_event_loop_proxy(
@@ -85,7 +85,7 @@ impl AccessKitAdapter {
 
     pub fn process_event(
         &mut self,
-        window: &winit::window::Window,
+        window: &dyn winit::window::Window,
         event: &winit::event::WindowEvent,
     ) {
         if matches!(event, winit::event::WindowEvent::Focused(_)) {

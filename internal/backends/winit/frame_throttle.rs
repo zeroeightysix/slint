@@ -38,13 +38,14 @@ impl FrameThrottle for TimerBasedFrameThrottle {
         if self.timer.running() {
             return;
         }
-        let refresh_interval_millihertz = self
-            .window_adapter
-            .upgrade()
-            .and_then(|adapter| adapter.winit_window())
-            .and_then(|winit_window| winit_window.current_monitor())
-            .and_then(|monitor| monitor.refresh_rate_millihertz())
-            .unwrap_or(60000) as u64;
+        let refresh_interval_millihertz = 60000;
+        // let refresh_interval_millihertz = self
+        //     .window_adapter
+        //     .upgrade()
+        //     .and_then(|adapter| adapter.winit_window())
+        //     .and_then(|winit_window| winit_window.video_modes())
+        //     .and_then(|monitor| monitor.refresh_rate_millihertz())
+        //     .unwrap_or(60000) as u64;
         let window_adapter = self.window_adapter.clone();
         let timer = Rc::downgrade(&self.timer);
         let interval =
