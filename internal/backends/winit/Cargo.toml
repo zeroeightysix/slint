@@ -74,7 +74,7 @@ pin-weak = "1"
 scoped-tls-hkt = "0.1"
 strum = { workspace = true }
 # winit = { version = "0.30.2", default-features = false, features = ["rwh_06"] }
-winit = { git = "https://github.com/rust-windowing/winit" }
+winit = { git = "https://github.com/SergioRibera/winit", branch = "layer_shell" }
 raw-window-handle = { version = "0.6", features = ["alloc"] }
 scopeguard = { version = "1.1.0", default-features = false }
 
