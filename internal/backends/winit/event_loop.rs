@@ -72,12 +72,15 @@ pub struct EventLoopState {
     pumping_events_instantly: bool,
 
     custom_application_handler: Option<Box<dyn crate::CustomApplicationHandler>>,
+
+    user_event_receiver: std::sync::mpsc::Receiver<CustomEvent>,
 }
 
 impl EventLoopState {
     pub fn new(
         shared_backend_data: Rc<SharedBackendData>,
         custom_application_handler: Option<Box<dyn crate::CustomApplicationHandler>>,
+        user_event_receiver: std::sync::mpsc::Receiver<CustomEvent>,
     ) -> Self {
         Self {
             shared_backend_data,
@@ -88,6 +91,7 @@ impl EventLoopState {
             current_resize_direction: Default::default(),
             pumping_events_instantly: Default::default(),
             custom_application_handler,
+            user_event_receiver,
         }
     }
 
@@ -429,50 +433,53 @@ impl winit::application::ApplicationHandler for EventLoopState {
         }
     }
 
-    // fn user_event(&mut self, event_loop: &dyn ActiveEventLoop, event: SlintEvent) {
-    //     match event.0 {
-    //         CustomEvent::UserEvent(user_callback) => user_callback(),
-    //         CustomEvent::Exit => {
-    //             self.suspend_all_hidden_windows();
-    //             event_loop.exit()
-    //         }
-    //         #[cfg(enable_accesskit)]
-    //         CustomEvent::Accesskit(accesskit_winit::Event { window_id, window_event }) => {
-    //             if let Some(window) = self.shared_backend_data.window_by_id(window_id) {
-    //                 let deferred_action = window
-    //                     .accesskit_adapter()
-    //                     .expect("internal error: accesskit adapter must exist when window exists")
-    //                     .borrow_mut()
-    //                     .process_accesskit_event(window_event);
-    //                 // access kit adapter not borrowed anymore, now invoke the deferred action
-    //                 if let Some(deferred_action) = deferred_action {
-    //                     deferred_action.invoke(window.window());
-    //                 }
-    //             }
-    //         }
-    //         #[cfg(target_arch = "wasm32")]
-    //         CustomEvent::WakeEventLoopWorkaround => {
-    //             event_loop.set_control_flow(ControlFlow::Poll);
-    //         }
-    //         #[cfg(muda)]
-    //         CustomEvent::Muda(event) => {
-    //             if let Some((window, eid, muda_type)) =
-    //                 event.id().0.split_once('|').and_then(|(w, e)| {
-    //                     let (e, muda_type) = e.split_once('|')?;
-    //                     Some((
-    //                         self.shared_backend_data.window_by_id(
-    //                             winit::window::WindowId::from(w.parse::<u64>().ok()?),
-    //                         )?,
-    //                         e.parse::<usize>().ok()?,
-    //                         muda_type.parse::<crate::muda::MudaType>().ok()?,
-    //                     ))
-    //                 })
-    //             {
-    //                 window.muda_event(eid, muda_type);
-    //             };
-    //         }
-    //     }
-    // }
+    fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
+        for event in self.user_event_receiver.try_iter() {
+            match event {
+                CustomEvent::UserEvent(user_callback) => user_callback(),
+                CustomEvent::Exit => {
+                    self.suspend_all_hidden_windows();
+                    event_loop.exit()
+                }
+                // #[cfg(enable_accesskit)]
+                // CustomEvent::Accesskit(accesskit_winit::Event { window_id, window_event }) => {
+                //     if let Some(window) = self.shared_backend_data.window_by_id(window_id) {
+                //         let deferred_action = window
+                //             .accesskit_adapter()
+                //             .expect("internal error: accesskit adapter must exist when window exists")
+                //             .borrow_mut()
+                //             .process_accesskit_event(window_event);
+                //         // access kit adapter not borrowed anymore, now invoke the deferred action
+                //         if let Some(deferred_action) = deferred_action {
+                //             deferred_action.invoke(window.window());
+                //         }
+                //     }
+                // }
+                #[cfg(target_arch = "wasm32")]
+                CustomEvent::WakeEventLoopWorkaround => {
+                    event_loop.set_control_flow(ControlFlow::Poll);
+                }
+                #[cfg(muda)]
+                CustomEvent::Muda(event) => {
+                    if let Some((window, eid, muda_type)) =
+                        event.id().0.split_once('|').and_then(|(w, e)| {
+                            let (e, muda_type) = e.split_once('|')?;
+                            Some((
+                                self.shared_backend_data.window_by_id(
+                                    winit::window::WindowId::from(w.parse::<u64>().ok()?),
+                                )?,
+                                e.parse::<usize>().ok()?,
+                                muda_type.parse::<crate::muda::MudaType>().ok()?,
+                            ))
+                        })
+                    {
+                        window.muda_event(eid, muda_type);
+                    };
+                }
+                _ => {}
+            }
+        }
+    }
 
     fn new_events(&mut self, event_loop: &dyn ActiveEventLoop, cause: winit::event::StartCause) {
         if matches!(

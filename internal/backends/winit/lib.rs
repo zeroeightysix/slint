@@ -465,6 +465,8 @@ impl BackendBuilder {
             }
         };
 
+        let (sender, receiver) = std::sync::mpsc::channel();
+
         Ok(Backend {
             renderer_factory_fn,
             event_loop_state: Default::default(),
@@ -475,6 +477,8 @@ impl BackendBuilder {
             #[cfg(target_family = "wasm")]
             spawn_event_loop: self.spawn_event_loop,
             custom_application_handler: self.custom_application_handler.into(),
+            user_event_receiver: RefCell::new(Some(receiver)),
+            user_event_sender: RefCell::new(Some(sender)),
         })
     }
 }
@@ -624,6 +628,7 @@ pub struct Backend {
     event_loop_state: RefCell<Option<crate::event_loop::EventLoopState>>,
     shared_data: Rc<SharedBackendData>,
     custom_application_handler: RefCell<Option<Box<dyn crate::CustomApplicationHandler>>>,
+    user_event_receiver: RefCell<Option<std::sync::mpsc::Receiver<CustomEvent>>>,
 
     /// This hook is called before a Window is created.
     ///
@@ -646,6 +651,7 @@ pub struct Backend {
 
     #[cfg(target_family = "wasm")]
     spawn_event_loop: bool,
+    pub user_event_sender: RefCell<Option<std::sync::mpsc::Sender<CustomEvent>>>,
 }
 
 impl Backend {
@@ -725,7 +731,7 @@ impl i_slint_core::platform::Platform for Backend {
 
     fn run_event_loop(&self) -> Result<(), PlatformError> {
         let loop_state = self.event_loop_state.borrow_mut().take().unwrap_or_else(|| {
-            EventLoopState::new(self.shared_data.clone(), self.custom_application_handler.take())
+            EventLoopState::new(self.shared_data.clone(), self.custom_application_handler.take(), self.user_event_receiver.take().unwrap())
         });
         #[cfg(target_family = "wasm")]
         {
@@ -745,7 +751,7 @@ impl i_slint_core::platform::Platform for Backend {
         _: i_slint_core::InternalToken,
     ) -> Result<core::ops::ControlFlow<()>, PlatformError> {
         let loop_state = self.event_loop_state.borrow_mut().take().unwrap_or_else(|| {
-            EventLoopState::new(self.shared_data.clone(), self.custom_application_handler.take())
+            EventLoopState::new(self.shared_data.clone(), self.custom_application_handler.take(), self.user_event_receiver.take().unwrap())
         });
         let (new_state, status) = loop_state.pump_events(Some(timeout))?;
         *self.event_loop_state.borrow_mut() = Some(new_state);
@@ -764,13 +770,17 @@ impl i_slint_core::platform::Platform for Backend {
     }
 
     fn new_event_loop_proxy(&self) -> Option<Box<dyn EventLoopProxy>> {
-        struct Proxy(winit::event_loop::EventLoopProxy);
+        struct Proxy(winit::event_loop::EventLoopProxy, std::sync::mpsc::Sender<CustomEvent>);
         impl EventLoopProxy for Proxy {
             fn quit_event_loop(&self) -> Result<(), EventLoopError> {
+                self.1.send(CustomEvent::Exit)
+                    .map_err(|_| EventLoopError::EventLoopTerminated)?;
+                self.0.wake_up();
+                Ok(())
                 // self.0
                 //     .send_event(SlintEvent(CustomEvent::Exit))
                 //     .map_err(|_| EventLoopError::EventLoopTerminated)
-                Ok(())
+                // Ok(())
             }
 
             fn invoke_from_event_loop(
@@ -797,7 +807,7 @@ impl i_slint_core::platform::Platform for Backend {
                 Ok(())
             }
         }
-        Some(Box::new(Proxy(self.shared_data.event_loop_proxy.clone())))
+        Some(Box::new(Proxy(self.shared_data.event_loop_proxy.clone(), self.user_event_sender.clone().into_inner().unwrap())))
     }
 
     #[cfg(target_arch = "wasm32")]
