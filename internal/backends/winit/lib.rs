@@ -785,7 +785,7 @@ impl i_slint_core::platform::Platform for Backend {
 
             fn invoke_from_event_loop(
                 &self,
-                _event: Box<dyn FnOnce() + Send>,
+                event: Box<dyn FnOnce() + Send>,
             ) -> Result<(), EventLoopError> {
                 // Calling send_event is usually done by winit at the bottom of the stack,
                 // in event handlers, and thus winit might decide to process the event
@@ -801,9 +801,9 @@ impl i_slint_core::platform::Platform for Backend {
                     .send_event(SlintEvent(CustomEvent::WakeEventLoopWorkaround))
                     .map_err(|_| EventLoopError::EventLoopTerminated)?;
 
-                // self.0
-                //     .send_event(SlintEvent(CustomEvent::UserEvent(event)))
-                //     .map_err(|_| EventLoopError::EventLoopTerminated)
+                self.1.send(CustomEvent::UserEvent(event))
+                    .map_err(|_| EventLoopError::EventLoopTerminated)?;
+                self.0.wake_up();
                 Ok(())
             }
         }
